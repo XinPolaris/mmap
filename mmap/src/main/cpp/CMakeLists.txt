@@ -28,6 +28,7 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         # List C/C++ source files with relative paths to this CMakeLists.txt.
         jni_registry.cpp
         MmapRegion.cpp
+        AsyncWriter.cpp
         common/Log.h
         common/FileUtils.cpp)
 # add_library() 只接受 源文件（.cpp/.c），头文件不会被编译

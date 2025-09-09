@@ -8,6 +8,13 @@
 #include <iomanip>
 #include <sstream>
 #include <chrono>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <sys/types.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <cstddef>
 
 void FileUtils::ensureFileExists(const std::string &path) {
     try {
@@ -20,12 +27,12 @@ void FileUtils::ensureFileExists(const std::string &path) {
         if (!fs::exists(path)) {
             std::ofstream ofs(path, std::ios::binary);
             if (!ofs) {
-                LOGE("FileUtils::ensureFileExists failed to create file: $s", path.c_str());
+                LOGE("FileUtils::ensureFileExists failed to create file: %s", path.c_str());
                 return;
             }
         }
     } catch (const fs::filesystem_error &e) {
-        LOGE("FileUtils::ensureFileExists filesystem_error: $s", e.what());
+        LOGE("FileUtils::ensureFileExists filesystem_error: %s", e.what());
     }
 }
 
@@ -35,7 +42,7 @@ void FileUtils::ensureDicExists(const std::string &path) {
             fs::create_directories(path);
         }
     } catch (const fs::filesystem_error &e) {
-        LOGE("FileUtils::ensureDicExists filesystem_error: $s", e.what());
+        LOGE("FileUtils::ensureDicExists filesystem_error: %s", e.what());
     }
 }
 
@@ -59,4 +66,59 @@ std::string FileUtils::generateMmapFileName(const std::string &dir) {
         << ".mmap";
 
     return oss.str();
+}
+
+std::vector<FileInfo> FileUtils::listFiles(const std::string &dir) {
+    std::vector<FileInfo> files;
+    DIR *dp = opendir(dir.c_str());
+    if (!dp) return files;
+
+    struct dirent *entry;
+    while ((entry = readdir(dp)) != nullptr) {
+        if (entry->d_name[0] == '.') continue; // 忽略隐藏文件
+        std::string fullPath = dir + "/" + entry->d_name;
+        struct stat st{};
+        if (stat(fullPath.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+            //文件修改时间，纳秒级
+#if defined(__linux__)// 如果是在 Linux 平台（包括 Android）
+            long long mtimeNs =
+                    static_cast<long long>(st.st_mtim.tv_sec) * 1'000'000'000LL +
+                    st.st_mtim.tv_nsec;
+#else
+            long long mtimeNs = static_cast<long long>(st.st_mtime) * 1'000'000'000LL;
+#endif
+            files.push_back({fullPath, mtimeNs, static_cast<size_t>(st.st_size)});
+        }
+    }
+    closedir(dp);
+
+    std::sort(files.begin(), files.end(),
+              [](const FileInfo &a, const FileInfo &b) { return a.mtimeNs < b.mtimeNs; });
+
+    //    LOGD("File list (%zu files):", files.size());
+//    for (const auto &file : files) {
+//        // 格式化时间
+//        std::tm *tm_info = std::localtime(&file.mtime);
+//        char buf[32];
+//        if (tm_info) {
+//            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm_info);
+//        } else {
+//            std::snprintf(buf, sizeof(buf), "N/A");
+//        }
+//
+//        LOGD("  path=%s, mtime=%s, size=%zu", file.path.c_str(), buf, file.size);
+//    }
+    return files;
+}
+
+void FileUtils::deleteFilesWithLimit(const std::vector<FileInfo> &files, size_t maxTotalSize) {
+    size_t totalSize = 0;
+    for (const auto &file: files)
+        totalSize += file.size;
+
+
+    for (auto it = files.begin(); it != files.end() && totalSize > maxTotalSize; ++it) {
+        totalSize -= it->size;
+        ::remove(it->path.c_str());
+    }
 }

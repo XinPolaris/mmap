@@ -10,11 +10,7 @@ public class MmapRegion {
     private long nativeHandle;
 
     public MmapRegion(String path, long size) {
-        this(path, size, false);
-    }
-
-    public MmapRegion(String path, long size, boolean saveDaily) {
-        nativeHandle = nativeCreate(path, size, saveDaily);
+        nativeHandle = nativeCreate(path, size);
     }
 
     public void release() {
@@ -22,7 +18,7 @@ public class MmapRegion {
         nativeHandle = 0;
     }
 
-    private native long nativeCreate(String path, long size, boolean saveDaily);
+    private native long nativeCreate(String path, long size);
 
     private native void nativeDestroy(long handle);
 

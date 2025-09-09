@@ -12,47 +12,20 @@
 #include <ctime>
 #include "Log.h"
 #include "FileUtils.h"
+#include "AsyncWriter.h"
 
-constexpr uint32_t MAGIC = 0x4D4D4150; // 文件头部固定标识符，判断文件有效
-
-struct FileInfo {
-    std::string path;
-    time_t mtime;
-    size_t size;
-};
+constexpr uint32_t MAGIC = 0x58415548; // 文件头部固定标识符，判断文件有效
 
 struct MmapHeader {
     uint32_t magic;       // 魔数标识
-    size_t writeOffset; // 当前写入到哪里
+    size_t writeOffset; // 记录当前写入位置
 };
 
-
-static std::vector<FileInfo> listFiles(const std::string &dir) {
-    std::vector<FileInfo> files;
-    DIR *dp = opendir(dir.c_str());
-    if (!dp) return files;
-
-    struct dirent *entry;
-    while ((entry = readdir(dp)) != NULL) {
-        if (entry->d_name[0] == '.') continue; // 忽略隐藏文件
-        std::string fullPath = dir + "/" + entry->d_name;
-        struct stat st;
-        if (stat(fullPath.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
-            files.push_back({fullPath, st.st_mtime, static_cast<size_t>(st.st_size)});
-        }
-    }
-    closedir(dp);
-
-    std::sort(files.begin(), files.end(),
-              [](const FileInfo &a, const FileInfo &b) { return a.mtime < b.mtime; });
-    return files;
-}
-
-MmapRegion::MmapRegion(const std::string &filePath, size_t maxSize)
-        : bufferFile(filePath + "/cache.mmap"), filesDir(filePath + "/files"), maxSize(maxSize) {
+MmapRegion::MmapRegion(const std::string &filePath, size_t size)
+        : bufferFile(filePath + "/cache.mmap"), filesDir(filePath + "/files"), maxTotalSize(size) {
     FileUtils::ensureFileExists(bufferFile);
     FileUtils::ensureDicExists(filesDir);
-    createMapping(maxCacheSize);
+    createMapping();
 }
 
 MmapRegion::~MmapRegion() {
@@ -60,23 +33,22 @@ MmapRegion::~MmapRegion() {
     destroyMapping();
 }
 
-
-bool MmapRegion::createMapping(size_t size) {
+bool MmapRegion::createMapping() {
     int fd = open(bufferFile.c_str(), O_RDWR | O_CREAT, 0666);
     if (fd < 0) {
         LOGE("open buffer file failed");
         return false;
     }
 
-    // 扩展文件大小
-    if (ftruncate(fd, size) < 0) {
+    // 扩展文件大小。如果文件原来小于 size → 会扩展文件，新增部分通常填 0；如果文件原来大于 size → 会截断文件，多余数据丢弃
+    if (ftruncate(fd, static_cast<off_t>(maxCacheSize)) < 0) {
         LOGE("ftruncate failed");
         close(fd);
         return false;
     }
 
     mmapPtr = static_cast<char *>(
-            mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+            mmap(nullptr, maxCacheSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
     close(fd);
 
     if (mmapPtr == MAP_FAILED) {
@@ -87,6 +59,8 @@ bool MmapRegion::createMapping(size_t size) {
 
     auto *header = reinterpret_cast<MmapHeader *>(mmapPtr);
     if (header->magic != MAGIC) {
+        // 清空缓冲区
+        std::memset(mmapPtr, 0, maxCacheSize);
         // 文件是新建的，初始化头部
         header->magic = MAGIC;
         header->writeOffset = sizeof(MmapHeader);
@@ -100,21 +74,29 @@ bool MmapRegion::createMapping(size_t size) {
 void MmapRegion::destroyMapping() {
     if (mmapPtr) {
         munmap(mmapPtr, maxCacheSize);
-        mmapPtr = NULL;
+        mmapPtr = nullptr;
     }
 }
 
-bool MmapRegion::write(const void *data, size_t size) {
-    if (!mmapPtr) return false;
-
-    if (writeOffset + size > maxCacheSize) {
-        if (!flush()) return false;
-        writeOffset = 0;
+bool MmapRegion::writeSync(const void *data, size_t size) {
+    if (!mmapPtr) {
+        LOGE("mmapPtr is null");
+        return false;
     }
-    LOGD("write %d %s", writeOffset, data);
+    if (size > maxCacheSize) {
+        LOGE("data size %zu exceeds max cache size %zu", size, maxCacheSize);
+        return false;
+    }
+    if (writeOffset + size > maxCacheSize) {
+        LOGD("writing out of mmap bounds, flushing first");
+        if (!flushSync()) {
+            LOGE("writing flush failed");
+            return false;
+        }
+        writeOffset = sizeof(MmapHeader);
+    }
     memcpy(mmapPtr + writeOffset, data, size);
     writeOffset += size;
-
     // 更新头部写入位置
     auto *header = reinterpret_cast<MmapHeader *>(mmapPtr);
     header->writeOffset = writeOffset;
@@ -122,14 +104,17 @@ bool MmapRegion::write(const void *data, size_t size) {
     return true;
 }
 
-bool MmapRegion::flush() {
-    if (!mmapPtr || writeOffset == 0) return true;
+bool MmapRegion::flushSync() {
+    if (!mmapPtr || writeOffset == 0) return false;
 
-    const size_t maxFileSize = 10 * 1024 * 1024; // 10M
-    const size_t maxTotalSize = 100 * 1024 * 1024; // 总容量 100M
+    size_t dataSize = writeOffset - sizeof(MmapHeader);
+    if (dataSize <= 0) {
+        LOGW("no data to write");
+        return false; // 没有数据可写
+    }
 
     // 获取文件列表
-    std::vector<FileInfo> files = listFiles(filesDir);
+    std::vector<FileInfo> files = FileUtils::listFiles(filesDir);
 
     // 找最新文件
     std::string latestFile;
@@ -142,18 +127,13 @@ bool MmapRegion::flush() {
     // 没有就新建文件
     if (latestFile.empty() || latestSize >= maxFileSize) {
         latestFile = FileUtils::generateMmapFileName(filesDir);
+        LOGD("create new file %s %d", latestFile.c_str(), latestSize);
     }
 
     int fd = open(latestFile.c_str(), O_RDWR | O_CREAT | O_APPEND, 0666);
     if (fd < 0) {
         LOGE("open final file");
         return false;
-    }
-
-    size_t dataSize = writeOffset - sizeof(MmapHeader);
-    if (dataSize <= 0) {
-        close(fd);
-        return true; // 没有数据可写
     }
 
     ssize_t written = ::write(fd, mmapPtr + sizeof(MmapHeader), dataSize);
@@ -174,16 +154,21 @@ bool MmapRegion::flush() {
     msync(header, sizeof(MmapHeader), MS_SYNC);
 
     // 删除超量文件
-    size_t totalSize = 0;
-    for (std::vector<FileInfo>::const_iterator it = files.begin(); it != files.end(); ++it) {
-        totalSize += it->size;
-    }
-
-    for (std::vector<FileInfo>::const_iterator it = files.begin();
-         it != files.end() && totalSize > maxTotalSize; ++it) {
-        totalSize -= it->size;
-        ::remove(it->path.c_str());
-    }
+    FileUtils::deleteFilesWithLimit(files, maxTotalSize);
 
     return true;
+}
+
+static AsyncWriter asyncWriter; // 单例后台线程
+
+void MmapRegion::write(const void *data, size_t size) {
+    asyncWriter.postTask([this, data, size]() {
+        this->writeSync(data, size);
+    });
+}
+
+void MmapRegion::flush() {
+    asyncWriter.postTask([this]() {
+        this->flushSync();
+    });
 }

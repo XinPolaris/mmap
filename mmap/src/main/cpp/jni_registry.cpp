@@ -11,7 +11,7 @@ using namespace std;
 /// =====================
 
 // nativeCreate
-jlong nativeCreate(JNIEnv *env, jobject /*obj*/, jstring jpath, jlong size, jboolean saveDaily) {
+jlong nativeCreate(JNIEnv *env, jobject /*obj*/, jstring jpath, jlong size) {
     if (!jpath) return 0; // 防止传入空字符串
 
     const char *cpath = env->GetStringUTFChars(jpath, nullptr);
@@ -77,10 +77,10 @@ void nativeFlush(JNIEnv *env, jobject obj) {
 /// =====================
 
 static JNINativeMethod gJniMethods[] = {
-        {"nativeCreate",  "(Ljava/lang/String;JZ)J", (void *) nativeCreate},
-        {"nativeDestroy", "(J)V",                    (void *) nativeDestroy},
-        {"write",         "(Ljava/lang/String;)V",   (void *) nativeWrite},
-        {"flush",         "()V",                     (void *) nativeFlush},
+        {"nativeCreate",  "(Ljava/lang/String;J)J", (void *) nativeCreate},
+        {"nativeDestroy", "(J)V",                   (void *) nativeDestroy},
+        {"write",         "(Ljava/lang/String;)V",  (void *) nativeWrite},
+        {"flush",         "()V",                    (void *) nativeFlush},
 };
 
 /// =====================

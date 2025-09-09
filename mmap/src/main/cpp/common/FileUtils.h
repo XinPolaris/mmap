@@ -8,6 +8,12 @@
 
 namespace fs = std::filesystem;
 
+struct FileInfo {
+    std::string path;
+    long long mtimeNs;  // 纳秒级时间戳
+    size_t size;
+};
+
 class FileUtils {
 public:
     /**
@@ -18,5 +24,7 @@ public:
     static void ensureFileExists(const std::string& path);
     static void ensureDicExists(const std::string& path);
     static std::string generateMmapFileName(const std::string& dir);
+    static std::vector<FileInfo> listFiles(const std::string &dir);
+    static void deleteFilesWithLimit(const std::vector<FileInfo> &files, size_t maxTotalSize);
 };
 
