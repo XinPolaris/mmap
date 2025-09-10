@@ -4,14 +4,17 @@ import android.os.Bundle
 import android.os.Process
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
+import com.huaxi.dev.log.Logger
 import com.huaxi.dev.mmap.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
 
-    val mmapRegion by lazy { MmapRegion(getExternalFilesDir("main")?.absolutePath, 50 * 1024) }
-//    val mmapRegion2 by lazy { MmapRegion(getExternalFilesDir("logcat")?.absolutePath, 50 * 1024) }
-
     private var testCount = 0
+
+    //行为日志
+    private val trackRegion by lazy {
+        MmapRegion(getExternalFilesDir("track")?.getAbsolutePath(), 10 * 1024 * 1024)
+    }
 
     private lateinit var binding: ActivityMainBinding
 
@@ -22,9 +25,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.write.setOnClickListener {
+            track("user click write")
             write()
         }
         binding.flush.setOnClickListener {
+            track("user click flush")
             flush()
         }
         Thread({
@@ -37,16 +42,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun write() {
         val startTime = System.currentTimeMillis()
-        mmapRegion.write("${Process.myPid()} $this log $testCount\n")
-        Log.i(TAG, "write cost: ${System.currentTimeMillis() - startTime} ms")
-//        mmapRegion2.write("${Process.myPid()} $this logcat $testCount\n")
+        Logger.i(TAG, "${Process.myPid()} $this write: $testCount")
+        Logger.i(TAG, "write cost: ${System.currentTimeMillis() - startTime} ms")
+        Log.i(TAG, "${Process.myPid()} logcat: $testCount")
         testCount++
     }
 
     private fun flush() {
         val startTime = System.currentTimeMillis()
-        mmapRegion.flush()
+        trackRegion.flush()
+        Logger.flush()
         Log.i(TAG, "flush cost: ${System.currentTimeMillis() - startTime} ms")
+    }
+
+    private fun track(msg: String) {
+        trackRegion.write("${System.currentTimeMillis()}: $this $msg\n")
     }
 
     companion object {

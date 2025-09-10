@@ -18,7 +18,7 @@
 
 // 全局统一 TAG，可以按模块修改
 #ifndef LOG_TAG
-#define LOG_TAG "MmapRegion"
+#define LOG_TAG "MMAP_REGION"
 #endif
 
 // 日志宏

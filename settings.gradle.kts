@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 rootProject.name = "mmap"
 include(":app")
 include(":mmap")
+include(":logger")

@@ -7,7 +7,8 @@
 
 class MmapRegion {
 public:
-    MmapRegion(const std::string &filePath, size_t size = 50 * 1024 * 1024); // 默认 50MB
+    MmapRegion(const std::string &filePath, size_t size);
+
     ~MmapRegion();
 
     // 写入数据
@@ -25,8 +26,8 @@ private:
 
     bool flushSync();
 
-    const size_t maxFileSize = 10 * 1024;//10 * 1024 * 1024; // 单个文件大小10M
-    const size_t maxCacheSize = 1 * 1024;     // 缓存大小50KB
+    size_t maxFileSize = 10 * 1024 * 1024; // 单个文件大小10M
+    const size_t maxCacheSize = 50 * 1024;     // 缓存大小50KB
 
     size_t maxTotalSize; // 总容量
     std::string bufferFile;   // 缓存路径

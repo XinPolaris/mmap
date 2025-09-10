@@ -23,6 +23,9 @@ struct MmapHeader {
 
 MmapRegion::MmapRegion(const std::string &filePath, size_t size)
         : bufferFile(filePath + "/cache.mmap"), filesDir(filePath + "/files"), maxTotalSize(size) {
+    if (maxFileSize > maxTotalSize) {
+        maxFileSize = maxTotalSize;
+    }
     FileUtils::ensureFileExists(bufferFile);
     FileUtils::ensureDicExists(filesDir);
     createMapping();
@@ -162,8 +165,11 @@ bool MmapRegion::flushSync() {
 static AsyncWriter asyncWriter; // 单例后台线程
 
 void MmapRegion::write(const void *data, size_t size) {
-    asyncWriter.postTask([this, data, size]() {
-        this->writeSync(data, size);
+    //深拷贝，防止异步执行时 data 已经失效
+    auto buffer = std::make_shared<std::vector<uint8_t>>((const uint8_t *) data,
+                                                         (const uint8_t *) data + size);
+    asyncWriter.postTask([this, buffer]() {
+        this->writeSync(buffer->data(), buffer->size());
     });
 }
 
